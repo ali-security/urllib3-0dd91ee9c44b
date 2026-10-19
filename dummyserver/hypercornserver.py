@@ -60,21 +60,31 @@ class Config(hypercorn.Config):
         port = 0  # Get a random port
         family = socket.AF_INET6 if ":" in host else socket.AF_UNSPEC
 
-        for res in socket.getaddrinfo(
-            host, port, family, socket.SOCK_STREAM, 0, socket.AI_PASSIVE
-        ):
-            af, socktype, proto, canonname, sockadddr = res
+        sock: socket.socket | None = None
+        try:
+            for res in socket.getaddrinfo(
+                host, port, family, socket.SOCK_STREAM, 0, socket.AI_PASSIVE
+            ):
+                af, socktype, proto, canonname, sockadddr = res
 
-            sock = socket.socket(af, socket.SOCK_STREAM, proto)
+                sock = socket.socket(af, socket.SOCK_STREAM, proto)
 
-            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
-            sock.setblocking(False)
-            sock.bind((host, port))
-            port = sock.getsockname()[1]
-            sock.set_inheritable(True)
-            sockets.append(sock)
+                sock.setblocking(False)
+                sock.bind((host, port))
+                port = sock.getsockname()[1]
+                sock.set_inheritable(True)
+                sockets.append(sock)
+        except BaseException:
+            # Close already-bound sockets so a retried EADDRINUSE does not leak
+            # them (GC would emit an unraisable ResourceWarning on a later test).
+            if sock is not None and sock not in sockets:
+                sock.close()
+            for s in sockets:
+                s.close()
+            raise
 
         return sockets
 
